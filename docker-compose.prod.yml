@@ -1,0 +1,48 @@
+# Production runtime for pre-built linux/amd64 images.
+# Build locally with scripts/build-images.sh, upload the image archive,
+# docker load it on the server, then run:
+#   docker compose -f docker-compose.prod.yml up -d
+name: quality-iqc
+
+services:
+  api:
+    image: ${API_IMAGE:-quality-iqc-api:1.1.0}
+    platform: linux/amd64
+    pull_policy: never
+    env_file:
+      - .env
+    environment:
+      UPLOAD_DIR: /app/uploads
+      TZ: Asia/Shanghai
+    volumes:
+      - iqc_uploads:/app/uploads
+    expose:
+      - "8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  web:
+    image: ${WEB_IMAGE:-quality-iqc-web:1.1.0}
+    platform: linux/amd64
+    pull_policy: never
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8088}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  iqc_uploads:
+    name: ${UPLOAD_VOLUME:-quality-iqc_iqc_uploads}

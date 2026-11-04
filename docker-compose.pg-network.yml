@@ -1,0 +1,17 @@
+# 可选：当现有 PostgreSQL 是 Docker 容器、且没有把 5432 发布到宿主机时使用。
+# 用法：
+#   PG_NETWORK=<现有 pg 容器所在网络名> docker compose \
+#     -f docker-compose.yml -f docker-compose.pg-network.yml up -d --build
+# 并把 .env 中 DATABASE_URL 的主机改为 pg 容器名（例如 postgres:5432）。
+services:
+  api:
+    networks:
+      default: {}
+      pgnet:
+        aliases:
+          - iqc-api
+
+networks:
+  pgnet:
+    external: true
+    name: ${PG_NETWORK:?请设置 PG_NETWORK 为现有 PostgreSQL 容器所在 Docker 网络名称}

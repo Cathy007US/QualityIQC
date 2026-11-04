@@ -1,0 +1,71 @@
+name: quality-iqc
+
+services:
+  db:
+    image: postgres:16-alpine
+    profiles: ["local-db"]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-iqc_insp}
+      POSTGRES_USER: ${POSTGRES_USER:-iqc}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-iqc_local_password}
+      TZ: Asia/Shanghai
+    ports:
+      - "${DB_PORT:-5435}:5432"
+    volumes:
+      - iqc_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-iqc} -d ${POSTGRES_DB:-iqc_insp}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  api:
+    build:
+      context: ./backend
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL 必须在 .env 中配置}
+      UPLOAD_DIR: /app/uploads
+      TZ: Asia/Shanghai
+    volumes:
+      - iqc_uploads:/app/uploads
+    expose:
+      - "8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  web:
+    build:
+      context: ./frontend
+    ports:
+      - "${WEB_PORT:-8088}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  # Keep the legacy volume names so the existing database and uploaded files
+  # survive the project rename. Do not change them without a migration.
+  iqc_pgdata:
+    name: iqc-insp_iqc_pgdata
+  iqc_uploads:
+    name: ${UPLOAD_VOLUME:-iqc-insp_iqc_uploads}

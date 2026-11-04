@@ -1,0 +1,21 @@
+# Optional override when the existing PostgreSQL container is not published on
+# the host. Attach the quality-Iqc API container to the existing pg network.
+#
+#   PG_NETWORK=<pg docker network> \
+#     docker compose -f docker-compose.prod.yml \
+#                    -f docker-compose.prod-pg-network.yml up -d
+#
+# Set DATABASE_URL host to the PostgreSQL container name, for example:
+#   postgresql+psycopg://iqc_user:password@pg16:5432/iqc_insp
+services:
+  api:
+    networks:
+      default: {}
+      pgnet:
+        aliases:
+          - reading-net
+
+networks:
+  pgnet:
+    external: true
+    name: ${PG_NETWORK:?请设置 PG_NETWORK 为现有 PostgreSQL 容器所在网络}
