@@ -103,6 +103,8 @@ export function DocumentsPage() {
             <button
               type="button"
               onClick={() => setParams({ category: null })}
+              title={t('docs.clearHint')}
+              aria-label={t('docs.clearHint')}
               className="text-[10px] font-semibold text-brand-700 hover:text-brand-900"
             >
               {t('docs.clear')}
