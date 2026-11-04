@@ -1,4 +1,331 @@
-# quality-Iqc · 太阳能 IQC 检验标准知识库
+# quality-Iqc
+
+**Language / 语言:** [EN](#english) | [CN](#chinese)
+
+<a id="english"></a>
+# English
+
+A bilingual IQC inspection standards knowledge base for PV module factories. It manages incoming inspection specifications, work instructions, sampling plans, and inspection forms for solar cells, PV glass, encapsulation films, aluminum frames, junction boxes, and ribbon/auxiliary materials. It supports bilingual public search, online preview, original-file download, and authenticated upload, replacement, revision history, and withdrawal management.
+
+> Current scope: **no** vectorization, embeddings, RAG, Milvus, pgvector, Elasticsearch, or Redis. The full stack runs on a single 2GB server.
+
+## Features
+
+**Public browsing**
+- `/zh` Chinese site and `/en` English site with a one-click header switch
+- Six PV material categories with Chinese and English names
+- Full-text keyword search across title, document number, summary, body, tags, supplier, and production line (PostgreSQL `ILIKE`)
+- Category and document-type filters; sort by updated time, downloads, or title; results isolated by language
+- DOCX / XLSX / PDF parsing into structured paragraphs, lists, tables, page breaks, and embedded images
+- Original-file download with download counters
+
+**Admin**
+- JWT + bcrypt login; authentication required only for upload, edit, replace, and withdrawal
+- Drag-and-drop upload with automatic parsing of body, summary, paragraph count, table count, and embedded images
+- Metadata maintenance, file replacement with a new revision, and historical revision downloads
+- Independent Chinese/English uploads, revisions, and download counts; the same document number groups the two languages
+- Chinese/English category names and descriptions
+- Audit log for login, upload, replace, update, delete, and category operations
+- Duplicate SHA-256 detection, file-type/size validation, and archive security checks
+
+## Tech Stack
+
+| Layer | Technology |
+| --- | --- |
+| Frontend | Vite 5 + React 18 + TypeScript + Tailwind CSS 3 + React Router v6 + lucide-react |
+| Backend | Python 3.11 + FastAPI + Uvicorn + SQLAlchemy 2 + Pydantic v2 |
+| Database | PostgreSQL 16 (dedicated `iqc_insp` database) |
+| Parsing | python-docx / openpyxl / pypdf |
+| Auth | JWT (PyJWT) + bcrypt |
+| Deployment | Docker Compose + Nginx + host Nginx/HTTPS |
+
+## Project Structure
+
+```text
+quality-Iqc/
+├── backend/
+│   ├── app/
+│   │   ├── api/            # public / auth / admin routes
+│   │   ├── services/       # parsing, storage, seed data
+│   │   ├── models.py       # SQLAlchemy models
+│   │   ├── schemas.py      # Pydantic schemas
+│   │   ├── security.py     # JWT / bcrypt / login rate limit
+│   │   └── main.py
+│   ├── tests/
+│   ├── requirements.txt
+│   └── Dockerfile
+├── frontend/
+│   ├── src/
+│   │   ├── pages/          # public + admin pages
+│   │   ├── components/
+│   │   ├── api/
+│   │   ├── auth/
+│   │   └── lib/
+│   ├── nginx.conf          # container Nginx (SPA + /api proxy)
+│   └── Dockerfile
+├── deploy/nginx-host.conf  # host Nginx sample
+├── samples/                # optional demo documents
+├── scripts/                # smoke test, sample data, packaging, deployment, backup
+├── docker-compose.yml
+├── docker-compose.pg-network.yml
+├── .env.local.example
+├── .env.production.example
+└── Makefile
+```
+
+## Local Quick Start (Docker, full stack)
+
+Requirements: Docker Desktop / Docker Engine + Compose v2.
+
+```bash
+cd quality-Iqc
+cp .env.local.example .env
+
+# IMPORTANT: change SECRET_KEY and ADMIN_PASSWORD in .env
+openssl rand -hex 32          # generate SECRET_KEY
+
+make local                    # same as docker compose --profile local-db up -d --build
+```
+
+Local ports:
+
+| Service | URL |
+| --- | --- |
+| Web | http://localhost:8088 |
+| API | http://localhost:8088/api |
+| OpenAPI | http://localhost:8088/api/docs |
+| PostgreSQL | `localhost:5435` (5432 inside the container) |
+
+The local stack runs a dedicated `postgres:16-alpine` container on host port **5435**, so it does not take the existing PostgreSQL port 5432. Production reuses the existing 5432 instance; see [DEPLOY.md](DEPLOY.md).
+
+Default local admin (from `.env`):
+
+```text
+Username: admin
+Password: Admin@123456
+```
+
+The first startup creates the schema, seeds six PV material categories with Chinese/English translations, and creates the admin user. **Change the password before production.** The admin interface remains Chinese, but supports Chinese/English uploads and filtering.
+
+### Import demo documents
+
+```bash
+./scripts/seed_samples.sh
+# or specify an address
+./scripts/seed_samples.sh http://localhost:8088
+```
+
+This uploads 12 PV IQC demo standards: 6 Chinese + 6 English, covering DOCX, XLSX, and PDF across all material categories. Re-running skips identical content. English files use the same document number (for example `PV-IQC-WI-001`) but have independent storage and revision management.
+
+### Smoke test
+
+```bash
+./scripts/smoke_test.sh
+# or
+make smoke
+```
+
+## Local Development (without Docker)
+
+### Backend
+
+```bash
+cd backend
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+
+export DATABASE_URL='postgresql+psycopg://iqc:password@127.0.0.1:5432/iqc_insp'
+export SECRET_KEY="$(openssl rand -hex 32)"
+uvicorn app.main:app --reload --port 8000
+```
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Vite runs on `http://localhost:5173`; `/api` is proxied to `http://127.0.0.1:8000`.
+
+### Build checks
+
+```bash
+cd frontend && npm run build
+cd ../backend && python -m compileall -q app
+```
+
+## Configuration
+
+Configuration is read from environment variables / `.env`:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `DATABASE_URL` | local db | SQLAlchemy + psycopg connection string |
+| `SECRET_KEY` | development placeholder | JWT signing key; production must use a random 64-hex value |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `480` | Login lifetime in minutes |
+| `ADMIN_USERNAME` | `admin` | Admin created on first startup |
+| `ADMIN_PASSWORD` | `Admin@123456` | Password used only on first creation; existing users are not overwritten |
+| `ADMIN_DISPLAY_NAME` | `光伏质量部管理员` | Display name |
+| `MAX_UPLOAD_MB` | `25` | Per-file limit |
+| `UPLOAD_DIR` | `uploads` | File storage directory (`/app/uploads` in the container) |
+| `CORS_ORIGINS` | local addresses | Comma-separated; production example `https://iqc.xx.com` |
+| `WEB_PORT` | `8088` | Host port mapped to the Web container |
+| `DB_PORT` | `5435` | Local database host port |
+
+## Data Model
+
+- `users`: admin account, bcrypt hash, last login time
+- `categories`: Chinese category name, slug, color, sort order
+- `category_translations`: English category name and description (`category_id + locale` unique)
+- `documents`: document number, language `locale`, title, category, type, revision, tags, effective date, file metadata, parsed text / JSONB blocks, download count
+  - `document_no + locale` is unique: one document number can have independent Chinese and English controlled documents
+  - Each language has its own revision, version history, image assets, and download count
+- `document_assets`: embedded Word/Excel image metadata, dimensions, MIME type, and ordering
+- `document_versions`: full snapshot for every replacement, including file and parsed content
+- `audit_logs`: login, upload, replace, update, delete, and category operations
+
+Files and extracted images are stored in the Docker volume `iqc-insp_iqc_uploads` (legacy name kept for data compatibility); only relative names are stored in PostgreSQL. Replacement keeps the previous original file and refreshes preview images; historical originals remain downloadable.
+
+## API Overview
+
+```text
+GET    /api/health
+GET    /api/stats?lang=zh-CN|en-US
+GET    /api/categories?lang=zh-CN|en-US
+GET    /api/documents?lang=&q=&category=&doc_type=&sort=&page=&page_size=
+GET    /api/documents/{id}?lang=zh-CN|en-US
+GET    /api/documents/{id}/related?lang=zh-CN|en-US
+GET    /api/documents/{id}/download
+GET    /api/documents/{id}/assets/{asset_id}   # embedded image
+
+POST   /api/auth/login
+GET    /api/auth/me
+
+GET    /api/admin/overview
+GET    /api/admin/documents
+POST   /api/admin/documents                 # multipart upload
+PATCH  /api/admin/documents/{id}
+POST   /api/admin/documents/{id}/replace    # multipart replacement
+DELETE /api/admin/documents/{id}            # soft delete / withdraw
+GET    /api/admin/documents/{id}/versions
+GET    /api/admin/documents/{id}/versions/{version_id}/download
+GET    /api/admin/categories
+POST   /api/admin/categories
+PATCH  /api/admin/categories/{id}
+DELETE /api/admin/categories/{id}
+```
+
+Public endpoints accept the `lang` query parameter (and `Accept-Language`) to return language-specific data and category names. A document detail includes `alternate_document_id` when the Chinese/English counterpart exists, enabling direct switching.
+
+Public routes:
+
+```text
+/zh                     Chinese home
+/en                     English home
+/zh/documents           Chinese standards library
+/en/documents           English standards library
+/zh/documents/{id}      Chinese detail
+/en/documents/{id}      English detail
+```
+
+Interactive API docs: `/api/docs`.
+
+## Document Parsing
+
+| Format | Behavior | Limits |
+| --- | --- | --- |
+| `.docx` | Rebuilds headings, paragraphs, lists, and tables; extracts images from body and tables | Does not parse header/footer or text-box images; no OCR |
+| `.xlsx` | Converts each visible sheet into a heading + table; extracts sheet images | 500 rows × 40 columns per sheet; images appended after the sheet |
+| `.pdf` | Extracts selectable text with pypdf and splits by page | Scanned PDFs require OCR first; 400 pages maximum |
+
+Image limits: 80 images, 12MB each, 64MB total. Supports PNG / JPEG / GIF / WebP; BMP/TIFF are converted to PNG; browser-incompatible EMF/WMF images are skipped and counted in `image_skipped`. Images are stored as controlled document assets and are served only after the document is published.
+
+> Image extraction starts in v1.1. Documents uploaded before that need to be re-uploaded or re-parsed with **Replace file** in the admin UI.
+
+Security limits: 25MB per file; file-header validation; Office archives limited to 250MB uncompressed and 5,000 entries; duplicate SHA-256 uploads are rejected.
+
+## Security
+
+- Public browsing; all write operations require a Bearer token
+- bcrypt cost 12; passwords longer than 72 bytes are rejected
+- Login rate limit: 8 failures per IP + username in 15 minutes
+- Upload filenames are sanitized; server-side storage uses UUID names; downloads and image responses use `nosniff`; images are readable only through the published-document asset endpoint
+- Production must replace `SECRET_KEY` and the admin password; `.env` must be `600`
+- Prefer binding only `127.0.0.1:8088` and terminating TLS at the host Nginx; the current Compose defaults to all interfaces, so restrict 8088 with a firewall if needed
+
+## Deployment
+
+For production, build `linux/amd64` images locally, upload the image archive, and only `docker load` on the server. This avoids `exec format error` from Apple Silicon images and OOM during builds on a 2GB server.
+
+See [DEPLOY_IMAGES.md](DEPLOY_IMAGES.md) for the full procedure. Minimal flow:
+
+```bash
+# local (works on Apple Silicon)
+./scripts/build-images.sh 1.1.0
+
+# upload
+rsync -avP dist-packages/quality-iqc-images-1.1.0.tar.gz root@SERVER:/tmp/
+rsync -avP dist-packages/quality-iqc-server-1.1.0.tar.gz root@SERVER:/tmp/
+
+# server
+gunzip -c /tmp/quality-iqc-images-1.1.0.tar.gz | docker load
+mkdir -p /opt/quality-iqc
+tar -xzf /tmp/quality-iqc-server-1.1.0.tar.gz -C /opt/quality-iqc
+cd /opt/quality-iqc
+cp .env.production.example .env
+chmod 600 .env
+vi .env
+docker compose -f docker-compose.prod.yml up -d
+```
+
+`docker-compose.prod.yml` uses only loaded images. It does not build and does not pull from Docker Hub. The source-build option remains in [DEPLOY.md](DEPLOY.md), but is not preferred.
+
+The host Nginx reverse-proxies `127.0.0.1:8088`; certbot issues the `iqc.xx.com` certificate.
+
+## Common Commands
+
+```bash
+make local       # build and start the local full stack
+make ps          # container status
+make logs        # follow logs
+make down        # stop
+make smoke       # smoke test
+make package     # source deployment package (no .env / uploads)
+make backup      # back up database and uploads
+```
+
+## Explicitly Out of Scope
+
+- Vectorization, embeddings, RAG
+- Milvus, pgvector, Elasticsearch, Redis
+- OCR / scanned-document recognition
+- Multi-tenancy, approval workflows, SSO
+
+## Verified Scope
+
+The local Docker full stack has been verified for:
+
+- Health checks, schema creation, and seed data
+- Admin login, wrong-password handling, and unauthorized upload blocking
+- DOCX / XLSX / PDF upload and structured parsing for 6 Chinese + 6 English PV standards
+- Chinese/English counterparts with the same document number, language filtering, and `alternate_document_id` switching
+- Embedded Word/Excel image extraction, public access, and detail-page rendering
+- Old image cleanup after file replacement and immediate use of new image URLs
+- Chinese/English keyword search, category filters, details, and downloads
+- Duplicate-file rejection, file replacement, version history, and historical downloads
+- `/zh` and `/en` routes, language switching, and bilingual category names
+- Admin bilingual upload, language filtering, and English category fields
+- Desktop and mobile rendering on public and admin pages
+
+---
+
+<a id="chinese"></a>
+# 中文
+
+**quality-Iqc · 太阳能 IQC 检验标准知识库**
 
 面向光伏组件工厂来料检验（IQC）场景的中英文双语标准知识库。集中管理电池片、光伏玻璃、封装胶膜、铝边框、接线盒与焊带辅材的检验规范、作业指导书、抽样方案和检验表单，支持中英文公开检索、在线预览、原文件下载，以及登录后的上传、替换、版本追溯与下架管理。
 
