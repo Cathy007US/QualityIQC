@@ -1,42 +1,94 @@
-# Production runtime for pre-built linux/amd64 images.
-# Build locally with scripts/build-images.sh, upload the image archive,
-# docker load it on the server, then run:
-#   docker compose -f docker-compose.prod.yml up -d
+# ============================================================
+# quality-Iqc 生产部署编排（服务器使用）
+#
+# 设计要点（对齐 BookHealth 的「小包发布」模式）：
+#   1. 自带 PostgreSQL 容器，不再依赖服务器外部 pg 网络
+#      → 彻底避免 host.docker.internal / reading-net 解析踩坑
+#   2. 前端 = 官方 nginx:alpine + 挂载 ./runtime/frontend
+#      → 改前端只传静态文件，几秒生效，无需重建/重启镜像
+#   3. 后端 = 基础镜像（含 pip 依赖）+ 挂载 ./runtime/backend/app
+#      → 改后端只传源码，force-recreate api 即可，不用传大镜像
+#   4. 所有密码/密钥只来自独立配置 iqc-api.env（与本地开发的 .env 隔离）；
+#      DATABASE_URL 由 deploy.sh 自动根据 POSTGRES_* 生成（含 URL 编码）
+#   5. 上传文件卷保留旧名字，历史数据自动延续，无需迁移文件
+#
+# 发布统一用：./scripts/deploy.sh <命令>
+#   frontend / backend / config / init / migrate / status / logs / ssh
+#
+# 手动命令参考：
+#   docker compose -f docker-compose.prod.yml up -d --build   # 首次/依赖变化
+#   docker compose -f docker-compose.prod.yml up -d --force-recreate api
+# ============================================================
 name: quality-iqc
 
 services:
-  api:
-    image: ${API_IMAGE:-quality-iqc-api:1.1.0}
-    platform: linux/amd64
-    pull_policy: never
+  # ---------------------- PostgreSQL ----------------------
+  db:
+    image: postgres:16-alpine
+    restart: always
     env_file:
-      - .env
+      - iqc-api.env
     environment:
-      UPLOAD_DIR: /app/uploads
       TZ: Asia/Shanghai
+      # POSTGRES_DB / POSTGRES_USER / POSTGRES_PASSWORD 全部来自 iqc-api.env
+      # 这里不写死，否则会覆盖 env_file，改密码就不生效
     volumes:
-      - iqc_uploads:/app/uploads
-    expose:
-      - "8000"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    restart: unless-stopped
+      - iqc_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # $$ 由容器内 shell 展开，取 iqc-api.env 注入的值
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER:-iqc}\" -d \"$${POSTGRES_DB:-iqc_insp}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
 
+  # ------------------------ 后端 API ------------------------
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: quality-iqc-api:latest
+    restart: always
+    env_file:
+      - iqc-api.env
+    environment:
+      UPLOAD_DIR: /app/uploads
+      TZ: Asia/Shanghai
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # 挂载源码：换代码只传 app 目录，不用重建镜像
+      # 镜像本身也 COPY 了一份 app 作为兜底，挂载会覆盖它
+      - ./runtime/backend/app:/app/app:ro
+      # 上传文件用命名卷，保留历史数据
+      - iqc_uploads:/app/uploads
+    expose:
+      - "8000"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ----------------------- 前端 Nginx -----------------------
   web:
-    image: ${WEB_IMAGE:-quality-iqc-web:1.1.0}
-    platform: linux/amd64
-    pull_policy: never
-    ports:
-      - "127.0.0.1:${WEB_PORT:-8088}:80"
+    image: nginx:alpine
+    restart: always
     depends_on:
       api:
         condition: service_healthy
-    restart: unless-stopped
+    ports:
+      # 仅回环暴露，由宿主机现有 Nginx 反代（与旧版一致）
+      - "127.0.0.1:${WEB_PORT:-8088}:80"
+    volumes:
+      # 挂载构建好的静态文件：替换即生效，无需重启容器
+      - ./runtime/frontend:/usr/share/nginx/html:ro
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     logging:
       driver: json-file
       options:
@@ -44,5 +96,8 @@ services:
         max-file: "3"
 
 volumes:
+  iqc_pgdata:
+    name: ${PG_VOLUME:-quality-iqc_pgdata}
   iqc_uploads:
+    # 保留旧上传卷名，历史文件自动延续
     name: ${UPLOAD_VOLUME:-quality-iqc_iqc_uploads}

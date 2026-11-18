@@ -2,8 +2,17 @@
 .env
 .env.local
 .env.production
+.deploy.env
+iqc-api.env
+iqc-api.env.bak
 *.pem
 *.key
+
+# Runtime deploy artifacts (synced from local builds, not source)
+runtime/frontend/*
+!runtime/frontend/.gitkeep
+runtime/backend/*
+!runtime/backend/.gitkeep
 
 # Python
 __pycache__/
@@ -38,3 +47,4 @@ backups/
 dist-packages/
 DEPLOY.md
 
+runtime/frontend/.gitkeep

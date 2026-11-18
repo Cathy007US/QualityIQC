@@ -1,3 +1,7 @@
+# 生产镜像 = 「依赖层」：pip 依赖与运行环境固化在镜像里，很少变化。
+# 业务源码 app/ 通过 docker-compose 挂载 ./runtime/backend/app 覆盖：
+#   改后端代码 → 只上传源码 → force-recreate api，无需重建/传输大镜像。
+# 下方 COPY app 仅作为挂载缺失时的兜底，正常生产由挂载生效。
 FROM python:3.11-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
